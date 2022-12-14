@@ -2,11 +2,17 @@ import { api, Callback, EthAsset } from '@interfaces/index';
 import { getBalanceByPaymentTokenAddress } from '@utils/index';
 import { getPriceString } from '@utils/getPriceString';
 import { useWeb3React } from '@web3-react/core';
-import { ethers } from 'ethers';
+import { BigNumber, ethers, Signature } from 'ethers';
 import { get } from 'lodash';
 import { useCallback } from 'react';
 import Web3 from 'web3';
 import { EIP_712_ORDER_TYPE } from '@interfaces/constants/ether';
+import { AuthProvider, ChainNetwork, OreId, PopupPluginSignParams } from "oreid-js";
+import { WebPopup } from "oreid-webpopup";
+import { OreidProvider } from "oreid-react";
+import { toRpcSig, bufferToBigInt } from '@ethereumjs/util'
+import { Buffer } from 'buffer'
+import * as BN from 'bn.js'
 
 declare let window: any;
 
@@ -57,25 +63,297 @@ export const useETHContract = (): Return => {
     return provider.getSigner(accountAddress);
   }
 
+  let decodeBase64 = function(s) {
+    var e={},i,b=0,c,x,l=0,a,r='',w=String.fromCharCode,L=s.length;
+    var A="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for(i=0;i<64;i++){e[A.charAt(i)]=i;}
+    for(x=0;x<L;x++){
+        c=e[s.charAt(x)];b=(b<<6)+c;l+=6;
+        while(l>=8){((a=(b>>>(l-=8))&0xff)||(x<(L-2)))&&(r+=w(a));}
+    }
+    return r;
+};
+
+let byteArrayToHexString =function toHexString(byteArray) {
+  return '0x'+Array.from(byteArray, function(byte: any) {
+    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+  }).join('')
+}
+
+let longToByteArray = function(/*long*/long) {
+  // we want to represent the input as a 8-bytes array
+  var byteArray = [0, 0, 0, 0, 0, 0, 0, 0];
+
+  for ( var index = 0; index < byteArray.length; index ++ ) {
+      var byte = long & 0xff;
+      byteArray [ index ] = byte;
+      long = (long - byte) / 256 ;
+  }
+
+  return byteArray;
+};
+
+
   const signOrder = async (orderParameters, accountAddress) => {
-    const signer = _getSigner(accountAddress);
-    const { chainId } = await provider.getNetwork();
 
-    const domainData = {
-      name: "Seaport",
-      version: "1.1",
-      chainId,
-      verifyingContract: "0x00000000006c3852cbef3e08e8df289169ede581"
-    };
+    let oreId : OreId 
+    oreId = new OreId({ 
+      isUsingProxyServer: false, 
+      appId: 't_b08a78e045e34a0482821cb1346dbcba',
+      plugins:{popup: WebPopup()}
+    });
+    await oreId.init()
 
-    const orderComponents = {...orderParameters, counter: 0};
+    await oreId.popup.auth({ provider: AuthProvider.Google})
 
-    const signature = await signer._signTypedData(
-      domainData,
-      EIP_712_ORDER_TYPE,
-      orderComponents
-    );
-    return ethers.utils.splitSignature(signature).compact;
+    try {
+      const userChainAccounts = oreId.auth.user.data.chainAccounts;
+      const ethAccount = userChainAccounts.find(ca => ca.chainNetwork === 'eth_goerli')
+    
+      const transactionBody = {
+        from: ethAccount?.chainAccount!,
+        to: "0x60d5DA4FC785Dd1dA9c2dAF084B2D5ba478c8f8b",
+        value: "0x02",
+        gasPrice: "0x1A4A6",
+        gasLimit: "0x6274"
+      }
+
+      const transaction = await oreId.createTransaction({
+        transaction: transactionBody,
+        chainAccount: ethAccount?.chainAccount,
+        chainNetwork: ethAccount?.chainNetwork!,
+
+        signOptions: {
+          broadcast: false,
+          signatureOnly: true,
+          returnSignedTransaction: true
+        }
+      })
+      console.log(`About to sign the following transaciton object:`, transaction)
+      const webWidgetSignResult = await oreId.popup.sign({ transaction })
+      console.log('The signed transaction object returned from oreid:', webWidgetSignResult)
+    
+
+    } catch (error) {
+      console.error(error)
+    }
+
+    // Return dummy signature for now
+    return ethers.utils.splitSignature('0x514da5a6ac5ef41487f176201119a2b61bff4c652bbb3280b047c5570f6b917e3b90eea5978b94be09f77f741f1e0fde44516c1a151ee7f8a7e568f2950a91751c').compact;
+  }
+
+
+  const _signOrder = async (orderParameters, accountAddress) => {
+    console.log('inside sign order')
+    // let oreId : OreId 
+    // oreId = new OreId({ 
+    //   isUsingProxyServer: false, 
+    //   appId: 't_b08a78e045e34a0482821cb1346dbcba',
+    //   plugins:{popup: WebPopup()}
+    // });
+    // await oreId.init()
+
+    // oreId.popup.auth({ provider: AuthProvider.Google}).then(async (response) => {
+    //   console.log(response)
+
+    //   const userChainAccounts = oreId.auth.user.data.chainAccounts;
+    //   const ethAccount = userChainAccounts.find(ca => ca.chainNetwork === 'eth_goerli')
+    
+    //   const transactionBody = {
+    //     from: ethAccount?.chainAccount!,
+    //     to: "0x60d5DA4FC785Dd1dA9c2dAF084B2D5ba478c8f8b",
+    //     value: "0x02",
+    //     gasPrice: "0x1A4A6",
+    //     gasLimit: "0x6274"
+    //   }
+    //   // var x : TransactionSignOptions = ''
+    //   try {
+    //     const transaction = await oreId.createTransaction({
+    //       transaction: transactionBody,
+    //       chainAccount: ethAccount?.chainAccount,
+    //       chainNetwork: ethAccount?.chainNetwork!,
+
+    //       signOptions: {
+    //         broadcast: false,
+    //         signatureOnly: true,
+    //         returnSignedTransaction: true
+    //       }
+    //     })
+    //     console.log(`About to sign the following transaciton object:`, transaction)
+    //     const webWidgetSignResult = await oreId.popup.sign({ transaction })
+    //     console.log('The signed transaction object returned from oreid:', webWidgetSignResult)
+    //     // console.log('The signature:', webWidgetSignResult.signatures[0])
+
+        
+    //     var signedTransaction = webWidgetSignResult.signedTransaction
+    //     console.log('s:', signedTransaction)
+    //     var decodedString = decodeBase64(signedTransaction);
+    //     console.log(decodedString);
+        
+    //     var transactionObj = JSON.parse(decodedString)
+    //     var signatureStr = transactionObj["signatures"][0]
+    //     var signatureObj = JSON.parse(signatureStr)
+
+    //     var r = signatureObj["r"]["data"]
+    //     var s = signatureObj["s"]["data"]
+    //     var v = signatureObj["v"]
+        
+    //     console.log('sig0:', signatureObj)
+    //     console.log('r:', r)
+    //     console.log('s:', s)
+    //     console.log('v:', v)
+
+    //     var rStr = byteArrayToHexString(r)
+    //     var sStr = byteArrayToHexString(s)
+    //     var vStr = byteArrayToHexString([v])
+    //     console.log('rStr:', rStr)
+    //     console.log('sStr:', sStr)
+    //     console.log('vStr:', vStr)
+
+    //     var rBuffer = Buffer.from(r)
+    //     var sBuffer = Buffer.from(s)
+    //     var vBuffer = Buffer.allocUnsafe(v)
+    //     var vBigInt = bufferToBigInt(vBuffer)
+    //     console.log('vBuffer', vBuffer)
+    //     console.log('vBigInt', vBigInt)
+    //     var sss = toRpcSig(vBigInt, rBuffer, sBuffer)
+
+    //     console.log('sss',sss)
+
+    //     // return sss
+    //     //return ethers.utils.splitSignature(sss).compact;
+
+    //     console.log('after return')
+
+    //   } catch (error) {
+    //     console.error(error)
+    //   }
+
+    try {
+      console.log('after return xx')
+
+        let oreId : OreId 
+        oreId = new OreId({ 
+          isUsingProxyServer: false, 
+          appId: 't_b08a78e045e34a0482821cb1346dbcba',
+          plugins:{popup: WebPopup()}
+        });
+        await oreId.init()
+
+        await oreId.popup.auth({ provider: AuthProvider.Google}).then(async (response) => {
+            console.log('insode auth')
+
+            const userChainAccounts = oreId.auth.user.data.chainAccounts;
+            const ethAccount = userChainAccounts.find(ca => ca.chainNetwork === 'eth_goerli')
+          
+            const transactionBody = {
+              from: ethAccount?.chainAccount!,
+              to: "0x60d5DA4FC785Dd1dA9c2dAF084B2D5ba478c8f8b",
+              value: "0x02",
+              gasPrice: "0x1A4A6",
+              gasLimit: "0x6274"
+            }
+            // var x : TransactionSignOptions = ''
+
+              const transaction = await oreId.createTransaction({
+                transaction: transactionBody,
+                chainAccount: ethAccount?.chainAccount,
+                chainNetwork: ethAccount?.chainNetwork!,
+
+                signOptions: {
+                  broadcast: false,
+                  signatureOnly: true,
+                  returnSignedTransaction: true
+                }
+              })
+
+              console.log(`About to sign the following transaciton object:`, transaction)
+              const webWidgetSignResult = await oreId.popup.sign({ transaction })
+              console.log('The signed transaction object returned from oreid:', webWidgetSignResult)
+              // console.log('The signature:', webWidgetSignResult.signatures[0])
+
+              var signedTransaction = webWidgetSignResult.signedTransaction
+              console.log('s:', signedTransaction)
+              var decodedString = decodeBase64(signedTransaction);
+              console.log(decodedString);
+              
+              var transactionObj = JSON.parse(decodedString)
+              var signatureStr = transactionObj["signatures"][0]
+              var signatureObj = JSON.parse(signatureStr)
+
+              var r = signatureObj["r"]["data"]
+              var s = signatureObj["s"]["data"]
+              var v = signatureObj["v"]
+              
+              console.log('sig0:', signatureObj)
+              console.log('r:', r)
+              console.log('s:', s)
+              console.log('v:', v)
+
+              var rStr = byteArrayToHexString(r)
+              var sStr = byteArrayToHexString(s)
+              var vStr = byteArrayToHexString([v])
+              console.log('rStr:', rStr)
+              console.log('sStr:', sStr)
+              console.log('vStr:', vStr)
+
+              var rBuffer = Buffer.from(r)
+              var sBuffer = Buffer.from(s)
+              var vBuffer = Buffer.allocUnsafe(v)
+              var vBigInt = bufferToBigInt(vBuffer) // This value is currently wrong
+              console.log('vBuffer', vBuffer)
+              console.log('vBigInt', vBigInt)
+              var sss = toRpcSig(vBigInt, rBuffer, sBuffer)
+
+              console.log('sss',sss)
+
+              
+        })
+
+        
+
+      
+
+
+
+
+
+      const signer = _getSigner(accountAddress);
+
+      console.log('signer',signer)
+      const { chainId } = await provider.getNetwork();
+  
+      const domainData = {
+        name: "Seaport",
+        version: "1.1",
+        chainId,
+        verifyingContract: "0x00000000006c3852cbef3e08e8df289169ede581"
+      };
+  
+      const orderComponents = {...orderParameters, counter: 0};
+  
+      const signature = await signer._signTypedData(
+        domainData,
+        EIP_712_ORDER_TYPE,
+        orderComponents
+      );
+
+      console.log('signature from web3',signature)
+      console.log('signature compact',ethers.utils.splitSignature(signature).compact)
+
+      return ethers.utils.splitSignature(signature).compact;
+    } catch (error) {
+      
+    }
+
+    
+
+
+    // }).catch((error) => {
+    //   console.error(error)
+    // })
+
+
   }
 
   const signBuyAsset = useCallback(
@@ -157,6 +435,7 @@ export const useETHContract = (): Return => {
         nonce: 0,
         counter: 0,
       };
+      console.log('before sign order')
       const signature = await signOrder(parameters, account)
 
       fetch(`https://testnets-api.opensea.io/v2/orders/goerli/seaport/listings`, {
